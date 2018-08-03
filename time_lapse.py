@@ -297,7 +297,7 @@ class SentinelHubTimelapse(object):
         if self.timelapse is None:
             data = self.fullres_request.get_data()
             return [data[idx] for idx, _ in enumerate(data) if self.mask[idx] == 0]
-        return [CommonUtil.bgr_to_rgb(img) for img in self.timelapse]
+        return self.timelapse
 
     def make_video(self, filename='timelapse.avi', fps=2, is_color=True, n_repeat=1):
         """
@@ -310,7 +310,7 @@ class SentinelHubTimelapse(object):
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         video = cv2.VideoWriter(os.path.join(self.project_name, filename), fourcc, float(fps), self.full_size,
                                 is_color)
-        images = self._get_timelapse_images()
+        images = [image[:, :, ::-1] for image in self._get_timelapse_images()]
         for _ in range(n_repeat):
             for image in images:
                 video.write(image)
@@ -327,7 +327,7 @@ class SentinelHubTimelapse(object):
         """
         with imageio.get_writer(os.path.join(self.project_name, filename), mode='I', fps=fps) as writer:
             for image in self._get_timelapse_images():
-                writer.append_data(CommonUtil.bgr_to_rgb(image))
+                writer.append_data(image)
 
 
 class TimestampUtil:
@@ -416,10 +416,3 @@ class CommonUtil:
         if within_range is None:
             return [0, n_imgs]
         return max(within_range[0], 0), min(within_range[1], n_imgs)
-
-    @staticmethod
-    def bgr_to_rgb(bgr):
-        """
-        Converts Blue, Green, Red to Red, Green, Blue
-        """
-        return bgr[..., [2, 1, 0]]
