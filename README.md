@@ -13,7 +13,7 @@ filter cloudy images out of the time-lapse.
 The package requires the following Python packages: (versions listed are
  the versions that we have used):
 
-* [sentinelhub](https://pypi.python.org/pypi/sentinelhub) version `2.0.0`
+* [sentinelhub](https://pypi.python.org/pypi/sentinelhub) version `2.3.0`
 * [s2cloudless](https://pypi.python.org/pypi/s2cloudless) version `1.1.0`
 * [opencv-python](https://pypi.python.org/pypi/opencv-python) version `3.4.0.14`
 * [numpy](https://pypi.python.org/pypi/numpy) version `1.13.3`

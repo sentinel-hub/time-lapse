@@ -126,7 +126,7 @@ class SentinelHubTimelapse(object):
                     caption = caption + '(' + "{0:2.0f}".format(self.cloud_coverage[index] * 100.0) + '%)'
 
                 ax.set_axis_off()
-                ax.imshow(CommonUtil.bgr_to_rgb(data[index]) * factor if data[index].shape[-1] == 3 else
+                ax.imshow(data[index] * factor if data[index].shape[-1] == 3 else
                           data[index] * factor, cmap=cmap, vmin=0.0, vmax=1.0)
                 ax.text(0, -2, caption, fontsize=12, color='r' if self.mask[index] else 'g')
             else:
