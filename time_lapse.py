@@ -39,13 +39,14 @@ class SentinelHubTimelapse(object):
         self.preview_request = WmsRequest(data_folder=project_name + '/previews', layer=layer, bbox=bbox,
                                           time=time_interval, width=preview_size[0], height=preview_size[1],
                                           maxcc=1.0, image_format=MimeType.PNG, instance_id=instance_id,
+                                          custom_url_params={CustomUrlParam.TRANSPARENT: True},
                                           time_difference=time_difference)
 
         self.fullres_request = WmsRequest(data_folder=project_name + '/fullres', layer=layer, bbox=bbox,
                                           time=time_interval, width=full_size[0], height=full_size[1],
                                           maxcc=1.0, image_format=MimeType.PNG, instance_id=instance_id,
-                                          custom_url_params={
-                                              CustomUrlParam.ATMFILTER: 'ATMCOR'} if use_atmcor else None,
+                                          custom_url_params={CustomUrlParam.TRANSPARENT: True,
+                                              CustomUrlParam.ATMFILTER: 'ATMCOR'} if use_atmcor else {CustomUrlParam.TRANSPARENT: True},
                                           time_difference=time_difference)
 
         wcs_request = WcsRequest(layer=layer, bbox=bbox, time=time_interval,
@@ -55,6 +56,10 @@ class SentinelHubTimelapse(object):
                                                                                      MODEL_EVALSCRIPT})
 
         self.cloud_mask_request = CloudMaskRequest(wcs_request)
+
+        self.transparency_data = None
+        self.preview_transparency_data = None
+        self.invalid_coverage = None
 
         self.dates = self.preview_request.get_dates()
         if not self.dates:
@@ -87,7 +92,9 @@ class SentinelHubTimelapse(object):
         Downloads and returns an numpy array of previews if previews were not already downloaded and saved to disk.
         Set `redownload` to True if to force downloading the previews again.
         """
+
         self.previews = np.asarray(self.preview_request.get_data(save_data=True, redownload=redownload))
+        self.preview_transparency_data = self.previews[:,:,:,-1]
 
         LOGGER.info('%d previews have been downloaded and stored to numpy array of shape %s.', self.previews.shape[0],
                     self.previews.shape)
@@ -98,7 +105,10 @@ class SentinelHubTimelapse(object):
         within the specified time interval are downloaded, although they will be for example masked due to too high
         cloud coverage.
         """
-        self.full_res_data = self.fullres_request.get_data(save_data=True, redownload=redownload)
+        
+        data4d = np.asarray(self.fullres_request.get_data(save_data=True, redownload=redownload))
+        self.full_res_data = data4d[:,:,:,:-1]
+        self.transparency_data = data4d[:,:,:,-1]
 
     def plot_preview(self, within_range=None, filename=None):
         """
@@ -126,7 +136,7 @@ class SentinelHubTimelapse(object):
                     caption = caption + '(' + "{0:2.0f}".format(self.cloud_coverage[index] * 100.0) + '%)'
 
                 ax.set_axis_off()
-                ax.imshow(data[index] * factor if data[index].shape[-1] == 3 else
+                ax.imshow(data[index] * factor if data[index].shape[-1] == 3 or data[index].shape[-1] == 4 else
                           data[index] * factor, cmap=cmap, vmin=0.0, vmax=1.0)
                 ax.text(0, -2, caption, fontsize=12, color='r' if self.mask[index] else 'g')
             else:
@@ -186,10 +196,31 @@ class SentinelHubTimelapse(object):
         """
         self._run_cloud_detection(rerun, threshold)
 
-        self.cloud_coverage = np.asarray([self._get_cloud_coverage(mask) for mask in self.cloud_masks])
+        self.cloud_coverage = np.asarray([self._get_coverage(mask) for mask in self.cloud_masks])
 
         for index in range(0, len(self.mask)):
             if self.cloud_coverage[index] > max_cloud_coverage:
+                self.mask[index] = 1
+
+
+
+    def mask_invalid_images(self, max_invalid_coverage=0.1):
+        """
+        Marks images whose invalid area coverage exceeds ``max_invalid_coverage``. Those
+        won't be used in timelapse.
+
+        :param max_invalid_coverage: Limit on the invalid area coverage of images forming timelapse, 0 <= maxic <= 1.
+        :type max_invalid_coverage: float
+        """
+
+        # low-res and hi-res images/cloud masks may differ, just to be safe
+        coverage_fullres = np.asarray([1.0-self._get_coverage(mask) for mask in self.transparency_data])
+        coverage_preview = np.asarray([1.0-self._get_coverage(mask) for mask in self.preview_transparency_data])
+
+        self.invalid_coverage = np.array([max(x,y) for x,y in zip(coverage_fullres, coverage_preview)])
+        
+        for index in range(0, len(self.mask)):
+            if self.invalid_coverage[index] > max_invalid_coverage:
                 self.mask[index] = 1
 
     def mask_images(self, idx):
@@ -210,13 +241,13 @@ class SentinelHubTimelapse(object):
         """
         Create date stamps to be included to gif.
         """
-        cloudless = list(compress(self.dates, list(np.logical_not(self.mask))))
+        filtered = list(compress(self.dates, list(np.logical_not(self.mask))))
 
         if not os.path.exists(self.project_name + '/datestamps'):
             os.makedirs(self.project_name + '/datestamps')
 
-        for date in cloudless:
-            TimestampUtil.create_date_stamp(date, cloudless[0], cloudless[-1],
+        for date in filtered:
+            TimestampUtil.create_date_stamp(date, filtered[0], filtered[-1],
                                             self.project_name + '/datestamps/' + date.strftime(
                                                 "%Y-%m-%dT%H-%M-%S") + '.png')
 
@@ -224,7 +255,7 @@ class SentinelHubTimelapse(object):
         """
         Adds date stamps to full res images and stores them in timelapse subdirectory.
         """
-        cloudless = list(compress(self.dates, list(np.logical_not(self.mask))))
+        filtered = list(compress(self.dates, list(np.logical_not(self.mask))))
 
         if not os.path.exists(self.project_name + '/timelapse'):
             os.makedirs(self.project_name + '/timelapse')
@@ -233,12 +264,12 @@ class SentinelHubTimelapse(object):
                                          self.project_name + '/timelapse/' + date.strftime(
                                              "%Y-%m-%dT%H-%M-%S") + '.png',
                                          self._get_filename('datestamps', date.strftime("%Y-%m-%dT%H-%M-%S")),
-                                         scale_factor=scale_factor) for date in cloudless]
+                                         scale_factor=scale_factor) for date in filtered]
 
     @staticmethod
-    def _get_cloud_coverage(mask):
-        cloudy_pixels = np.count_nonzero(mask)
-        return 1.0 * cloudy_pixels / mask.size
+    def _get_coverage(mask):
+        coverage_pixels = np.count_nonzero(mask)
+        return 1.0 * coverage_pixels / mask.size
 
     @staticmethod
     def _iso_to_datetime(date):
@@ -295,7 +326,7 @@ class SentinelHubTimelapse(object):
 
     def _get_timelapse_images(self):
         if self.timelapse is None:
-            data = self.fullres_request.get_data()
+            data = np.array(self.fullres_request.get_data())[:,:,:,:-1]
             return [data[idx] for idx, _ in enumerate(data) if self.mask[idx] == 0]
         return self.timelapse
 
@@ -307,10 +338,16 @@ class SentinelHubTimelapse(object):
         :param is_color:
         :type is_color: bool
         """
+
+        images = np.array([image[:,:,[2,1,0]] for image in self._get_timelapse_images()])
+
+        if None in self.full_size:
+            self.full_size = (int(images.shape[2]),int(images.shape[1]))
+
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         video = cv2.VideoWriter(os.path.join(self.project_name, filename), fourcc, float(fps), self.full_size,
                                 is_color)
-        images = [image[:, :, ::-1] for image in self._get_timelapse_images()]
+                
         for _ in range(n_repeat):
             for image in images:
                 video.write(image)
