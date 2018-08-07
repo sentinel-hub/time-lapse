@@ -22,6 +22,7 @@ from sentinelhub.data_request import WmsRequest, WcsRequest
 from sentinelhub.constants import MimeType, CustomUrlParam
 from s2cloudless import CloudMaskRequest, MODEL_EVALSCRIPT
 
+from PIL import Image
 
 LOGGER = logging.getLogger(__name__)
 
@@ -362,9 +363,12 @@ class SentinelHubTimelapse(object):
         :param fps: frames per second
         :type fps: int
         """
-        with imageio.get_writer(os.path.join(self.project_name, filename), mode='I', fps=fps) as writer:
-            for image in self._get_timelapse_images():
-                writer.append_data(image)
+
+        frames = []
+        for image in self._get_timelapse_images():
+            frames.append(Image.fromarray(image))
+
+        frames[0].save(os.path.join(self.project_name, filename), save_all=True, append_images=frames[1:], fps=fps, loop=True, optimize=False)
 
 
 class TimestampUtil:
